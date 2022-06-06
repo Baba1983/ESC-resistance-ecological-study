@@ -1,0 +1,3380 @@
+---
+title: 'ESC resistance: National Integrated Surveillance Ecological Study'
+author: "Babafela Awosile"
+date: "4/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+```{r include=FALSE}
+library(readxl)
+library(knitr)
+library(dplyr)
+library(rmarkdown)
+library(tidyverse)
+library(readr)
+library(lubridate)
+library(RColorBrewer)
+library(reshape)
+library(pander)
+library(xtable)
+library(broman)
+library(png)
+library(grid)
+library(stringr)
+library(kableExtra)
+library(plotly)
+library(janitor)
+library(lme4)
+library(readxl)
+library(lmerTest)
+library(sjPlot)
+library(sjmisc)
+library(ggpubr)
+library(ggsignif)
+library(ggplot2)
+library(xts)
+library(forecast)
+library(vars)
+library(tseries)
+library(fpp)
+library(betareg)
+
+```
+
+**Beta regression model for Salmonella spp with animal host variable included in the model**
+```{r echo=TRUE}
+
+## SALMONELLA ESC RESISTANCE MODEL
+ 
+library(readxl)
+data <- read_excel("global ESC work.xlsx", sheet = "ESC Salm")
+
+
+names(data) <- tolower(names(data))
+  
+datal <- data %>%
+mutate(prop = round((positive/total), 3))
+
+data_beta <- datal %>%
+  filter(host != "animals")
+
+data_beta$prop <- as.numeric(data_beta$prop)
+data_beta$country <- as.factor(data_beta$country)
+data_beta$host <- as.factor(data_beta$host)
+data_beta$year <- as.numeric(data_beta$year)
+
+# ALot of zeros, so model not converging
+
+#library(betareg)
+#model_beta <- betareg(prop ~ country + year + host, data = data_beta) # too many zero so model not converging
+#summary(model_beta)
+#hist(data_beta$prop) # alot of zeros
+
+```
+
+
+```{r}
+
+#------------------------------------------------------------------------------------------------------------------
+# transformation of proportion so that the values fall between 0 and 1 (Smithson and Verkuilen 2006)
+#The precision parameter  varies through a linear regression structure (Table 5). For fixed, the larger  the smaller the variance of y.  As the precision parameter estimate is statistically significant, this means that the change in the variance of the dependent variable represents a unit change in the explanatory variables. 
+
+#(PDF) Beta Regression for the Indicator Values of Well-Being Index for Provinces in Turkey. Available from: https://www.researchgate.net/publication/320490332_Beta_Regression_for_the_Indicator_Values_of_Well-Being_Index_for_Provinces_in_Turkey [accessed Apr 30 2021].
+
+#library (betareg)
+#data("GasolineYield", package = "betareg")  # initialize data
+#inputData <- GasolineYield  # plug-in your data here
+#trainingIndex <- c(1:(nrow(inputData)-1))  # create row indices of training data
+#trainingData <- inputData[trainingIndex, ] # training data
+#testData <- inputData[-trainingIndex, ] # test data
+#betaMod <- betareg(yield ~ batch + temp, data = trainingData) # train model. Tune var names.
+#summary (betaMod) # model summary
+#predict (betaMod, testData) # predict on test data (0.19 vs actual 0.18)
+#--------------------------------------------------------------------------------------------------------------------
+
+library(betareg)
+#Country with host specific data
+#Transformation to take care of zeros
+data_beta$ptrans <- (data_beta$prop*(data_beta$total-1) + 0.5)/data_beta$total
+#Model
+model_beta <- betareg(ptrans ~ country + year*host, data = data_beta) # Better model
+summary(model_beta) # better model based on AIC
+
+model_betx <- betareg(ptrans ~ country*year+host, data = data_beta) # Better model
+summary(model_betx)
+AIC(model_beta, model_betx)
+
+#model_betx1 <- betareg(ptrans ~ country*host +year*host, data = data_beta) # Not good
+#summary(model_betx1)
+
+coef(model_beta)
+vcov(model_beta)
+plot(model_beta, type = "pearson")
+cooks.distance(model_beta)
+gleverage(model_beta)
+library(lmtest)
+waldtest(model_beta)
+coeftest(model_beta)
+bptest(model_beta)   #The null hypothesis of bptest is that the residuals have constant variance. So, a p-value less than 0.05 would mean that the homoscedasticity assumption would have to be rejected.
+plot(model_beta)
+
+
+#Wald test of the predictors
+library(aod)
+wald.test(b = coef(model_beta), Sigma = vcov(model_beta), Terms = 2:5) #Terms tells R which terms in the model are to be tested, in this case, terms 2, 3, 4 correspond to the house dummy variable (intercept =1), are the three terms for the levels of rank.
+wald.test(b = coef(model_beta), Sigma = vcov(model_beta), Terms = 6:6) #year
+wald.test(b = coef(model_beta), Sigma = vcov(model_beta), Terms = 7:9)#animal source
+wald.test(b = coef(model_beta), Sigma = vcov(model_beta), Terms = 10:12)#interaction
+
+
+# Odds ratio
+exp(coef(model_beta))
+exp(cbind(OR = coef(model_beta), confint(model_beta)))
+
+# COnvert to Odds ratio, standard error 
+model.d2 <- broom::tidy(model_beta)  # Convert model to dataframe for easy manipulation
+model.d2
+
+
+model2 <- model.d2 %>% 
+  mutate(or = exp(estimate),
+         var.diag = diag(vcov(model_beta)),
+         or.se = sqrt(or^2 * var.diag))
+
+model2
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+#Interaction plots
+plot1s <- plot_model(model_beta, type = "pred", terms = c("year", "host"), grid = TRUE) +  scale_y_continuous(limits = c(0, 0.20))
+plot1s
+
+#plot1a <- plot_model(model_beta, type = "pred", terms = c("year", "country")) +  scale_y_continuous(limits = c(0, 0.20))
+#plot1a
+
+plot1b <- plot_model(model_beta, type = "pred", terms = c("year", "host"), title = "", legend.title = "") +  scale_y_continuous(limits = c(0, 0.2)) + labs(x = "Year") + labs(y = "Predicted proportion of ESC-R Salmonella enterica ") + theme(text = element_text(family = "A"))
+plot1b
+
+#Saving the plots in tiff resolution
+tiff(file = "Salmonella interaction.tiff", width=6, height=4, units="in", res=200)
+#Plot
+plot1b
+
+dev.off()
+
+
+model2
+plot_model(model_beta, vline.color = "red", show.values = TRUE, value.offset = .3)
+
+
+
+
+
+```
+
+**Analysis using national data for food producing animals for Salmonella**
+```{r}
+
+#Analysis using national data for food producing animals for Salmonella
+
+dat1 <- data %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 3),
+         propp = prop*100)
+
+windowsFonts(A = windowsFont("Times New Roman"))
+library(ggpubr)
+salm_period <- ggboxplot(dat1, x = "country", y = "propp", 
+          color = "country",
+          ylab = "ESC-R Salmonella (%)", xlab = "Country", title = "", ggtheme = coord_flip()) + theme(text = element_text(family = "A"))
+
+salm_period
+
+#Saving the plots in tiff resolution
+tiff(file = "Boxplot salm PeriodPrev.tiff", width=6, height=4, units="in", res=500)
+#Plot
+
+salm_period
+dev.off()
+
+
+```
+
+
+## Period prevalence of ESC-R Slamonella
+
+```{r}
+
+dat_period_salm <- data %>%
+  group_by(country) %>%
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 4),
+         propp = prop*100)
+
+dat_period_salm$Country <- dat_period_salm$country
+
+
+library(meta)
+
+plotsat <- metaprop(posv, N, studlab = Country, data = dat_period_salm)
+
+plotsat
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+
+forest.meta(plotsat, digits = 3)
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot salm PeriodPrev.tiff", width=7, height=4, units="in", res=500)
+#Plot
+forest.meta(plotsat, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", overall = FALSE, hetstat = F, smlab = "ESC-R Salmonella")
+
+dev.off()
+
+
+
+```
+
+## Meta analysis of proportion for Salmonella
+
+```{r, fig.height=60, fig.width=40}
+
+
+dat1$Country <- dat1$country
+
+
+library(meta)
+
+plotsa <- metaprop(posv, N, studlab = year, data = dat1, subgroup = Country)
+
+plotsa
+forest.meta(plotsa)
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot salmonellaALL.tiff", width=20, height=45, units="in", res=500)
+#Plot
+forest.meta(plotsa)
+
+dev.off()
+#par(mfrow=c(1,3))
+#Library(grid)
+```
+
+
+```{r, fig.height=24}
+
+plotsa1 <- metaprop(posv, N, studlab = year, data = dat1, subgroup = Country, subset = (Country %in% c("Canada", "Denmark", "Finland")))
+plotsa1
+
+Library(grid)
+
+windowsFonts(A = windowsFont("Times New Roman"))
+forest.meta(plotsa1, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", fontsize=12, overall = FALSE, smlab = "ESC-R Salmonella enterica") 
+
+ps1 <- grid.grab()
+
+plotsa2 <- metaprop(posv, N, studlab = year, data = dat1, subgroup = Country, subset = (Country %in% c("Japan", "Netherland", "Norway")))
+plotsa2
+windowsFonts(A = windowsFont("Times New Roman"))
+forest.meta(plotsa2, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", fontsize=12, overall = FALSE, smlab = "ESC-R Salmonella enterica") 
+
+ps2 <- grid.grab()
+
+plotsa3 <- metaprop(posv, N, studlab = year, data = dat1, subgroup = Country, subset = (Country %in% c("Sweden", "UK", "USA")))
+plotsa3
+windowsFonts(A = windowsFont("Times New Roman"))
+forest.meta(plotsa3, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", fontsize=12, overall = FALSE, smlab = "ESC-R Salmonella enterica")
+
+ps3 <- grid.grab()
+
+library(gridExtra)
+
+grid.newpage()
+
+grid.arrange(ps1, ps2, nrow = 1)
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot salmonella.tiff", width=18, height=15, units="in", res=500)
+#Plot
+grid.arrange(ps1, ps2, nrow = 1)
+
+dev.off()
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot salmonella2.tiff", width=18, height=15, units="in", res=500)
+#Plot
+grid.arrange(ps3, nrow = 1)
+
+dev.off()
+
+
+
+```
+
+
+
+## Beta regression model
+
+```{r}
+
+
+#Transformation to take care of zeros
+dat1$`ESC-R Salmonella` <- (dat1$prop*(dat1$N-1) + 0.5)/dat1$N
+
+
+#Model
+model_b <- betareg(`ESC-R Salmonella` ~ country + year, data = dat1) 
+summary(model_b) #better model based on AIC
+
+
+model_bett <- betareg(`ESC-R Salmonella` ~ country * year, data = dat1) 
+summary(model_bett)
+AIC(model_b, model_bett) 
+
+coef(model_b)
+vcov(model_b)
+plot(model_b)
+cooks.distance(model_b)
+gleverage(model_b)
+model.frame(model_b)
+library(lmtest)
+waldtest(model_b)
+coeftest(model_b)
+bptest(model_b)
+
+
+
+# Odds ratio
+exp(coef(model_b))
+exp(cbind(OR = coef(model_b), confint(model_b)))
+
+
+#Wald test of the predictors
+library(aod)
+#wald.test(b = coef(mod_salm), Sigma = vcov(mod_salm), Terms = 2:4) #Terms tells R which terms in the model are to be tested, in this case, terms 2, 3, 4 correspond to the house dummy variable (intercept =1), are the three terms for the levels of rank.
+wald.test(b = coef(model_b), Sigma = vcov(model_b), Terms = 2:9) #country
+wald.test(b = coef(model_b), Sigma = vcov(model_b), Terms = 10:10) #year
+
+# COnvert to Odds ratio, standard error 
+model.d2 <- broom::tidy(model_b)  # Convert model to dataframe for easy manipulation
+model.d2
+
+
+model2 <- model.d2 %>% 
+  mutate(or = exp(estimate),
+         var.diag = diag(vcov(model_b)),
+         or.se = sqrt(or^2 * var.diag))
+
+model2
+
+library(sjPlot)
+
+plot_model(model_b, vline.color = "red", show.values = TRUE, value.offset = .3, value.size = 5, dot.size = 3, line.size = 1, title = "") + labs(y = "Odds ratio of ESC-R Salmonella") + theme(text = element_text(family = "A"))#, width = 1
+
+
+exp(cbind(OR = coef(model_b), confint(model_b)))
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Salmonella model.tiff", width=6, height=4, units="in", res=500)
+#Plot
+plot_model(model_b, vline.color = "red", show.values = TRUE, value.offset = .3, value.size = 5, dot.size = 3, line.size = 1, title = "") + labs(y = "Odds ratio of ESC-R Salmonella") + theme(text = element_text(family = "A"))
+
+dev.off()
+
+
+```
+
+
+```{r}
+#-------------------------------------------------------------------------------
+
+
+# Data exporting of table
+data_salm_tot <- dat1 %>%
+  dplyr::select(country, year, propp) %>%
+  spread(country, propp)
+
+data_salm_n <- dat1 %>%
+  dplyr::select(country, year, N) %>%
+  spread(country, N)
+
+data_salmp <- write.csv(data_salm_tot, "Salm propn.csv")
+data_salmn <- write.csv(data_salm_n, "Salm total.csv")
+
+
+#-------------------------------------------------------------------------------
+
+
+
+
+
+```
+
+**Beta-regression model for non-selectve Escherichia coli: Animal groups**
+```{r}
+
+library(readxl)
+#library(metafor)
+data1 <- read_excel("global ESC work.xlsx", sheet = "ESC Ecoli")
+
+
+names(data1) <- tolower(names(data1))
+  
+datal1 <- data1 %>%
+  mutate(prop = round((positive/total), 3))
+ 
+data_beta1 <- datal1 %>%
+  filter(host != "animal")
+
+data_beta1$prop <- as.numeric(data_beta1$prop)
+data_beta1$country <- as.factor(data_beta1$country)
+data_beta1$host <- as.factor(data_beta1$host)
+data_beta1$year <- as.numeric(data_beta1$year)
+
+library(betareg)
+#model_beta1 <- betareg(prop ~ country + year + host, data = data_beta1) # too many zero so model not converging
+#summary(model_beta1)
+#hist(data_beta1$prop) # alot of zeros
+```
+
+
+```{r}
+
+#Country with host specific data
+#Transformation to take care of zeros
+data_beta1$`ESC-R Ecoli` <- (data_beta1$prop*(data_beta1$total-1) + 0.5)/data_beta1$total
+
+
+#Model
+model_beta1 <- betareg(`ESC-R Ecoli` ~ country+year+animal, data = data_beta1)
+summary(model_beta1)
+
+#Model
+model_beta11 <- betareg(`ESC-R Ecoli` ~ country*year +animal, data = data_beta1)
+summary(model_beta11)# better model
+
+model_beta112 <- betareg(`ESC-R Ecoli` ~ country+animal*year, data = data_beta1)
+summary(model_beta112) 
+
+AIC(model_beta1, model_beta11, model_beta112) # model_beta11 has lower AIC 
+
+coef(model_beta11)
+vcov(model_beta11)
+plot(model_beta11, type = "pearson")
+cooks.distance(model_beta11)
+gleverage(model_beta11)
+library(lmtest)
+waldtest(model_beta11)
+coeftest(model_beta11)
+bptest(model_beta11)
+
+# Odds ratio
+exp(coef(model_beta11))
+exp(cbind(OR = coef(model_beta11), confint(model_beta11)))
+
+
+#Wald test of the predictors
+library(aod)
+#wald.test(b = coef(mod_salm), Sigma = vcov(mod_salm), Terms = 2:4) #Terms tells R which terms in the model are to be tested, in this case, terms 2, 3, 4 correspond to the house dummy variable (intercept =1), are the three terms for the levels of rank.
+wald.test(b = coef(model_beta11), Sigma = vcov(model_beta11), Terms = 2:9) #country
+wald.test(b = coef(model_beta11), Sigma = vcov(model_beta11), Terms = 10:10) #year
+wald.test(b = coef(model_beta11), Sigma = vcov(model_beta11), Terms = 11:15) #host
+wald.test(b = coef(model_beta11), Sigma = vcov(model_beta11), Terms = 16:23) #year
+
+
+# COnvert to Odds ratio, standard error 
+model.d2 <- broom::tidy(model_beta11)  # Convert model to dataframe for easy manipulation
+model.d2
+
+
+model2 <- model.d2 %>% 
+  mutate(or = exp(estimate),
+         var.diag = diag(vcov(model_beta11)),
+         or.se = sqrt(or^2 * var.diag))
+
+model2
+
+
+
+#plot2 <- plot_model(model_beta11, type = "pred", terms = c("year", "host"), grid = TRUE) +  scale_y_continuous(limits = c(0, 0.13))
+#plot2
+
+#plot2a <- plot_model(model_beta11, type = "pred", terms = c("year", "host")) +  scale_y_continuous(limits = c(0, 0.13))
+#plot2a
+
+plot3 <- plot_model(model_beta11, type = "pred", terms = c("year", "country")) +  scale_y_continuous(limits = c(0, 0.30))
+plot3
+
+
+#plot4 <- plot_model(model_beta11, type = "pred", terms = c("year", "host", "country"), grid = TRUE) +  scale_y_continuous(limits = c(0, 0.2))
+#plot4
+plot13 <- plot_model(model_beta11, type = "pred", terms = c("year", "country"), title = "", legend.title = "") +  scale_y_continuous(limits = c(0, 0.3)) + labs(x = "Year") + labs(y = "Predicted proportion of ESC-R E.coli") + theme(text = element_text(family = "A"))
+plot13
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoliyear interaction.tiff", width=6, height=4, units="in", res=200)
+#Plot
+plot13
+
+dev.off()
+
+
+
+
+
+```
+
+**Beta-regression model for non-selective Escherichia coli: National data for all food producing animals**
+```{r}
+
+  
+dat15 <- data1 %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 4),
+         propp = prop*100)
+
+
+
+windowsFonts(A = windowsFont("Times New Roman"))
+library(ggpubr)
+
+
+ecoli_period <- ggboxplot(dat15, x = "country", y = "propp", 
+          color = "country",
+          ylab = "Non-selective ESC-R E. coli (%)", xlab = "Country", title = "", ggtheme = coord_flip()) + theme(text = element_text(family = "A"))
+
+
+
+ecoli_period
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Boxplot ecoli PeriodPrev.tiff", width=6, height=4, units="in", res=500)
+#Plot
+
+ecoli_period
+dev.off()
+
+
+```
+
+
+## Period prevalence of Non-selective ESC-R E. coli
+
+```{r}
+
+
+dat_period_ecoli <- data1 %>%
+  group_by(country) %>%
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 4),
+         propp = prop*100)
+
+dat_period_ecoli$Country <- dat_period_ecoli$country
+
+
+library(meta)
+
+plotset <- metaprop(posv, N, studlab = Country, data = dat_period_ecoli)
+
+plotset
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+
+forest.meta(plotset, digits = 3)
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot ecoli PeriodPrev.tiff", width=7, height=4, units="in", res=500)
+#Plot
+forest.meta(plotset, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", overall = FALSE, hetstat = F, smlab = "Non-selective ESC-R E.coli")
+
+dev.off()
+
+
+
+```
+
+
+## Meta analysis of proportion for Non-selective Escherichia coli
+
+```{r, fig.height=70}
+
+
+dat15$Country <- dat15$country
+
+
+library(meta)
+
+plotea <- metaprop(posv, N, studlab = year, data = dat15, subgroup = Country,digits=5, control=list(stepadj=0.5)) # control=list(stepadj=0.5) helps with iteration process https://www.metafor-project.org/doku.php/tips:convergence_problems_rma
+
+plotea
+
+forest.meta(plotea)
+
+
+```
+
+
+
+```{r}
+
+#par(mfrow=c(1,3))
+#Library(grid)
+
+plotse1 <- metaprop(posv, N, studlab = year, data = dat15, subgroup = Country, subset = (Country %in% c("Canada", "Denmark", "Finland")), control=list(stepadj=0.5))
+plotse1
+windowsFonts(A = windowsFont("Times New Roman"))
+forest.meta(plotse1, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", fontsize=12, hetstat = F, overall = FALSE, smlab = "ESC-R Escherichia coli") 
+
+ps4 <- grid.grab()
+
+plotea2 <- metaprop(posv, N, studlab = year, data = dat15, subgroup = Country, subset = (Country %in% c("Japan", "Netherland", "Norway")), control=list(stepadj=0.5))
+plotea2
+windowsFonts(A = windowsFont("Times New Roman"))
+forest.meta(plotea2, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", fontsize=12, hetstat = F, overall = FALSE, smlab = "ESC-R Escherichia coli") 
+
+ps5 <- grid.grab()
+
+plotea3 <- metaprop(posv, N, studlab = year, data = dat15, subgroup = Country, subset = (Country %in% c("Sweden", "UK", "USA")), control=list(stepadj=0.5))
+plotea3
+windowsFonts(A = windowsFont("Times New Roman"))
+forest.meta(plotea3, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", fontsize=12, hetstat = F, overall = FALSE, smlab = "ESC-R Escherichia coli")
+
+ps6 <- grid.grab()
+
+library(gridExtra)
+
+grid.newpage()
+
+grid.arrange(ps4, ps5, nrow = 1)
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot Ecoli.tiff", width=18, height=15, units="in", res=500)
+#Plot
+grid.arrange(ps4, ps5, nrow = 1)
+
+dev.off()
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot Ecoli2.tiff", width=18, height=15, units="in", res=500)
+#Plot
+grid.arrange(ps6, nrow = 1)
+
+dev.off()
+
+
+
+```
+
+
+## BEta regression model for non selective ESC-R E. coli
+
+```{r}
+
+#Transformation to take care of zeros
+dat15$`ESC-R Ecoli` <- (dat15$prop*(dat15$N-1) + 0.5)/dat15$N
+
+
+#Model
+model_bb <- betareg(`ESC-R Ecoli` ~ country + year, data = dat15) 
+summary(model_bb)
+
+
+model_bett5 <- betareg(`ESC-R Ecoli` ~ country * year, data = dat15) 
+summary(model_bett5)
+AIC(model_bb, model_bett5) #model_bett5 is less in term of AIC
+
+coef(model_bett5)
+vcov(model_bett5)
+plot(model_bett5)
+cooks.distance(model_bett5)
+gleverage(model_bett5)
+model.frame(model_bett5)
+#model.matrix(model_bb)
+library(lmtest)
+waldtest(model_bett5)
+lrtest(model_bett5, model_bb)
+coeftest(model_bett5)
+bptest(model_bett5)
+
+# Odds ratio
+exp(coef(model_bett5))
+exp(cbind(OR = coef(model_bett5), confint(model_bett5)))
+
+#Wald test of the predictors
+library(aod)
+#wald.test(b = coef(mod_salm), Sigma = vcov(mod_salm), Terms = 2:4) #Terms tells R which terms in the model are to be tested, in this case, terms 2, 3, 4 correspond to the house dummy variable (intercept =1), are the three terms for the levels of rank.
+wald.test(b = coef(model_bett5), Sigma = vcov(model_bett5), Terms = 2:9) #country
+wald.test(b = coef(model_bett5), Sigma = vcov(model_bett5), Terms = 10:10) #year
+wald.test(b = coef(model_bett5), Sigma = vcov(model_bett5), Terms = 11:14) #host
+
+
+
+# COnvert to Odds ratio, standard error 
+model.d2 <- broom::tidy(model_bett5)  # Convert model to dataframe for easy manipulation
+model.d2
+
+
+model2 <- model.d2 %>% 
+  mutate(or = exp(estimate),
+         var.diag = diag(vcov(model_bett5)),
+         or.se = sqrt(or^2 * var.diag))
+
+model2
+
+
+#Interaction plots
+plot1 <- plot_model(model_bett5, type = "pred", terms = c("year", "country"), transform = TRUE, title = "", legend.title = "") + scale_y_continuous(limits = c(0, 0.13)) + labs(x = "Year") + labs(y = "Predicted proportion of non-selective ESC-R E.coli") + theme(text = element_text(family = "A"))
+plot1
+
+
+#plot12 <- plot_model(model_bb, type = "pred", terms = c("year", "country")) +  scale_y_continuous(limits = c(0, 0.13))
+#plot12
+
+#plot13 <- plot_model(model_bb, type = "pred", terms = c("year", "country"), grid = TRUE) +  scale_y_continuous(limits = c(0, 0.15))
+#plot13
+
+
+#Saving the plots in tiff resolution
+tiff(file = "ESC-R Ecoli total plot.tiff", width=6, height=4, units="in", res=500)
+#Plot
+plot1
+# Close device
+dev.off()
+
+
+#plot_model(model_bett5, show.values = TRUE, value.offset = .3, title = "")
+
+#--------------------------------------------------------------------------------------------------------------------------
+
+# Data exporting of table
+data_ecoli_tot <- dat15 %>%
+  dplyr::select(country, year, propp) %>%
+  spread(country, propp)
+
+data_ecoli_n <- dat15 %>%
+  dplyr::select(country, year, N) %>%
+  spread(country, N)
+
+data_ecolip <- write.csv(data_ecoli_tot, "Ecoli propn.csv")
+data_ecolin <- write.csv(data_ecoli_n, "Ecoli total.csv")
+
+
+
+
+
+```
+
+
+**Correlation analysis between ESC-R and ESC  use for Salmonella spp**
+```{r, fig.width=9}
+
+
+#Import ESC use data
+
+data2 <- read_excel("global ESC work.xlsx", sheet = "ESC use")
+names(data2) <- tolower(names(data2))
+
+esc <- data2 %>%
+  mutate(esc_ton = round(kg/1000,3)) %>%
+  dplyr::select(country,year, kg, esc_ton, `mg/pcu`)
+
+
+#Bind ESC use data to National ESC-R Salmonella data
+
+cor_data <- left_join(dat1, esc, by = c("country", "year"))
+
+## Correlation analysis
+
+
+
+# All the country together: Year
+ggscatter(cor_data, x = "year", y = "propp", size = 0.3,
+          color = "country", palette = "jco",
+          facet.by = "country", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE, xlab = "Year", ylab = "ESC-R Salmonella (%)") +
+  stat_cor(aes(color = country), method = "spearman", label.y = 25) + theme(text = element_text(family = "A"))
+
+
+
+# All the country together: ESC use
+
+#Select countries with ESC data
+corr_data <- cor_data %>%
+  filter(country %in% c("Denmark", "Finland", "Netherland", "Norway", "Sweden", "UK"))
+
+
+ggscatter(corr_data, x = "mg/pcu", y = "propp", size = 0.3,
+          color = "country", palette = "jco",
+          facet.by = "country", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE, xlab = "ESC use (mg/PCU)", ylab = "ESC-R Salmonella (%)") +
+  stat_cor(aes(color = country), method = "spearman", label.y = 10) + theme(text = element_text(family = "A"))
+
+#--------------------------------------------------------------------------------------------------------------------------------
+```
+
+```{r,fig.height=9, fig.width=12}
+## Correlation analysis for Salmonella
+library("ggpubr")
+
+
+
+# Netherland
+neth <- cor_data %>%
+  filter(country == "Netherland")
+
+#Denmark
+den <- cor_data %>%
+  filter(country == "Denmark")
+
+#Norway
+nor <- cor_data %>%
+  filter(country == "Norway")
+
+#Sweden
+swe <- cor_data %>%
+  filter(country == "Sweden")
+
+#UK
+ku <- cor_data %>%
+  filter(country == "UK")
+
+
+#Canada
+can <- cor_data %>%
+  filter(country == "Canada")
+
+#USA
+us <- cor_data %>%
+  filter(country == "USA")
+
+#Japan
+jp <- cor_data %>%
+  filter(country == "Japan")
+
+#Finland
+fn <- cor_data %>%
+  filter(country == "Finland")
+
+
+
+#par(mfrow=c(2,4))
+#par(mar=c(0.5, 4.5, 0.5, 0.5))
+
+library(grid)
+
+
+vplayout <- function(x, y) viewport(layout.pos.row = x, layout.pos.col = y)
+
+
+
+
+#ESC_R and USE
+aa <- ggscatter(can, x = "esc_ton", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (tonnes)", ylab = "ESC-R Salmonella (%)", title = "Canada") + theme(text = element_text(family = "A"))
+
+
+#ESC-R and Use
+ba <- ggscatter(den, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R Salmonella (%)", title = "Denmark") + theme(text = element_text(family = "A"))
+
+
+
+#esc-r and use
+ca<- ggscatter(fn, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R Salmonella (%)", title = "Finland") + theme(text = element_text(family = "A"))
+
+#esc-r and use
+da <- ggscatter(neth, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R Salmonella (%)", title = "Netherland") + theme(text = element_text(family = "A"))
+
+
+
+#ESC-r and use
+ea <- ggscatter(nor, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R Salmonella (%)", title = "Norway") + theme(text = element_text(family = "A"))
+
+#ESC-R and Use
+fa <- ggscatter(swe, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R Salmonella (%)", title = "Sweden") + theme(text = element_text(family = "A"))
+
+
+#ESC_R and USE
+ga <- ggscatter(ku, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R Salmonella (%)", title = "UK") + theme(text = element_text(family = "A"))
+
+
+#ESC-R and use
+ha <- ggscatter(us, x = "esc_ton", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (tonnes)", ylab = "ESC-R Salmonella (%)", title = "USA") + theme(text = element_text(family = "A"))
+
+#Saving the plots in tiff resolution
+tiff(file = "Salmonella ESC use.tiff", width=18, height=9, units="in", res=200)
+# 4 figures arranged in 2 rows and 2 columns
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(2, 4)))
+print(aa, vp = vplayout(1, 1))
+print(ba, vp = vplayout(1, 2))
+print(ca, vp = vplayout(1, 3))
+print(da, vp = vplayout(1, 4))
+print(ea, vp = vplayout(2, 1))
+print(fa, vp = vplayout(2, 2))
+print(ga, vp = vplayout(2, 3))
+print(ha, vp = vplayout(2, 4))
+
+
+# Close device
+dev.off()
+
+```
+
+
+**Correlation analysis between ESC-R and year for Salmonella spp**
+
+```{r,fig.height=9, fig.width=12}
+
+#Corrrelation analysis 
+#Year
+a1 <- ggscatter(can, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "Canada", label.y = 25) + theme(text = element_text(family = "A"))
+
+
+#Year
+a2 <- ggscatter(den, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "Denmark", label.y = 25) + theme(text = element_text(family = "A"))
+
+#Year
+a3 <- ggscatter(fn, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "Finland", label.y = 25)+ theme(text = element_text(family = "A"))
+
+#Year
+a4 <- ggscatter(jp, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "Japan", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#year
+a5 <- ggscatter(neth, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "Netherland", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#res <- cor.test(neth$`mg/pcu`, neth$prop, method = "spearman") #, "pearson", "kendall"
+#res
+
+#year
+a6 <- ggscatter(nor, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "Norway", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+#YEar
+a7 <- ggscatter(swe, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "Sweden", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+#Year
+a8 <- ggscatter(ku, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "UK", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#Year
+a9 <- ggscatter(us, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R Salmonella (%)", title = "USA", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Salmonella year.tiff", width=18, height=9, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(3, 3)))
+print(a1, vp = vplayout(1, 1))
+print(a2, vp = vplayout(1, 2))
+print(a3, vp = vplayout(1, 3))
+print(a4, vp = vplayout(2, 1))
+print(a5, vp = vplayout(2, 2))
+print(a6, vp = vplayout(2, 3))
+print(a7, vp = vplayout(3, 1))
+print(a8, vp = vplayout(3, 2))
+print(a9, vp = vplayout(3, 3))
+
+
+# Close device
+dev.off()
+
+
+```
+
+
+**Correlation analysis between ESC-R and ESC use for non-selective E. coli amd also corr betw year and ESC -R**
+```{r, fig.height= 8, fig.width=9}
+
+#Import ESC use data
+data2 <- read_excel("global ESC work.xlsx", sheet = "ESC use")
+names(data2) <- tolower(names(data2))
+
+esc <- data2 %>%
+  mutate(esc_ton = round(kg/1000,3)) %>%
+  dplyr::select(country,year, kg, esc_ton, `mg/pcu`)
+
+#Bind ESC use data with National ESC-R E. coli
+
+cor1_data <- left_join(dat15, esc, by = c("country", "year"))
+
+
+## Correlation analysis
+
+# All the country together: Year
+ggscatter(cor1_data, x = "year", y = "propp", size = 0.3,
+          color = "country", palette = "jco",
+          facet.by = "country", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE, xlab = "Year", ylab = "ESC-R E. coli (%)") +
+  stat_cor(aes(color = country), method = "spearman", label.y = 6)
+
+
+
+# All the country together: ESC use
+
+#Select countries with ESC data
+corr1_data <- cor1_data %>%
+  filter(country %in% c("Denmark", "Netherland", "Norway", "Sweden", "UK"))
+
+ggscatter(corr1_data, x = "mg/pcu", y = "propp", size = 0.3,
+          color = "country", palette = "jco",
+          facet.by = "country", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE, xlab = "ESC use (mg/PCU)", ylab = "ESC-R E. coli (%)") +
+  stat_cor(aes(color = country), method = "spearman", label.y = 6)
+
+
+
+
+
+
+
+
+
+
+```
+
+**Correlation analysis between ESC use and non-selective ESC -R E. coli**
+
+```{r}
+
+
+
+# Netherland
+neth <- cor1_data %>%
+  filter(country == "Netherland")
+
+#Denmark
+den <- cor1_data %>%
+  filter(country == "Denmark")
+
+# Finland
+fn <- cor1_data %>%
+  filter(country == "Finland")
+
+# Japan
+jpi <- cor1_data %>%
+  filter(country == "Japan")
+
+#Norway
+nor <- cor1_data %>%
+  filter(country == "Norway")
+
+#Sweden
+swe <- cor1_data %>%
+  filter(country == "Sweden")
+
+#UK
+ku <- cor1_data %>%
+  filter(country == "UK")
+
+
+#Canada
+can <- cor1_data %>%
+  filter(country == "Canada")
+
+#USA
+us <- cor1_data %>%
+  filter(country == "USA")
+
+#Japan
+jp <- cor1_data %>%
+  filter(country == "Japan")
+
+#Finland
+fn <- cor1_data %>%
+  filter(country == "Finland")
+
+
+library("ggpubr")
+
+
+#ESC_R and USE
+b1 <- ggscatter(can, x = "esc_ton", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (tonnes)", ylab = "ESC-R E. coli (%)", title = "Canada", label.y = 25)+ theme(text = element_text(family = "A"))
+
+#ESC-R and Use
+b2 <- ggscatter(den, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R E. coli (%)", title = "Denmark", label.y = 25)+ theme(text = element_text(family = "A"))
+
+#ESC-R and Use
+b3 <- ggscatter(fn, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R E. coli (%)", title = "Finland", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#esc-r and use
+b4 <- ggscatter(neth, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "Non-selective ESC-R E. coli (%)", title = "Netherland", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+#ESC-r and use
+b5 <- ggscatter(nor, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R E. coli (%)", title = "Norway", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+#ESC-R and Use
+b6 <- ggscatter(swe, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R E. coli (%)", title = "Sweden", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+#ESC_R and USE
+b7 <- ggscatter(ku, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "ESC-R E. coli (%)", title = "UK", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+
+#ESC-R and use
+b8 <- ggscatter(us, x = "esc_ton", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (tonnes)", ylab = "ESC-R E. coli (%)", title = "USA", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoli Esc use.tiff", width=18, height=9, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(2, 4)))
+print(b1, vp = vplayout(1, 1))
+print(b2, vp = vplayout(1, 2))
+print(b3, vp = vplayout(1, 3))
+print(b4, vp = vplayout(1, 4))
+print(b5, vp = vplayout(2, 1))
+print(b6, vp = vplayout(2, 2))
+print(b7, vp = vplayout(2, 3))
+print(b8, vp = vplayout(2, 4))
+
+
+
+# Close device
+dev.off()
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Netherland Ecoli Esc use.tiff", width=6, height=4, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+
+
+b4
+
+# Close device
+dev.off()
+
+
+
+
+
+
+```
+
+
+**Correlation analysis between year and non-selective ESC -R E. coli**
+
+```{r}
+
+
+#Year
+c1 <- ggscatter(can, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "Canada", label.y = 25)+ theme(text = element_text(family = "A"))
+
+#Year
+c2 <- ggscatter(den, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "Denmark", label.y = 25)+ theme(text = element_text(family = "A"))
+#Year
+c3 <- ggscatter(fn, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "Finland", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#Year
+c4 <- ggscatter(jpi, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "Japan", label.y = 25)+ theme(text = element_text(family = "A"))
+
+#year
+c5 <- ggscatter(neth, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "Netherland", label.y = 25)+ theme(text = element_text(family = "A"))
+
+#Corrrelation analysis 
+#res <- cor.test(neth$`mg/pcu`, neth$prop, method = "spearman") #, "pearson", "kendall"
+#res
+
+#year
+c6 <- ggscatter(nor, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "Norway", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#YEar
+c7 <- ggscatter(swe, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "Sweden", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+#Year
+c8 <- ggscatter(ku, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "UK", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+#Year
+c9 <- ggscatter(us, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "ESC-R E. coli (%)", title = "USA", label.y = 25)+ theme(text = element_text(family = "A"))
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoli year.tiff", width=18, height=9, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(3, 3)))
+print(c1, vp = vplayout(1, 1))
+print(c2, vp = vplayout(1, 2))
+print(c3, vp = vplayout(1, 3))
+print(c4, vp = vplayout(2, 1))
+print(c5, vp = vplayout(2, 2))
+print(c6, vp = vplayout(2, 3))
+print(c7, vp = vplayout(3, 1))
+print(c8, vp = vplayout(3, 2))
+print(c9, vp = vplayout(3, 3))
+
+
+# Close device
+dev.off()
+
+
+```
+
+
+**Time-series analysis**
+
+```{r}
+
+
+#ts (inputData, start=c(2009), end=c(2014), frequency=1) # Yearly Data
+
+library(tidyverse)
+
+esc_europe <- esc %>% 
+  filter(country %in% c("Denmark", "Finland", "Netherland", "Norway", "Sweden", "UK"))
+
+plotz1 <- ggplot(esc_europe, aes(x=year, y=`mg/pcu`, color = country)) +
+  geom_line(size = 1.0) + 
+  xlab("") + facet_wrap(country ~ .) + 
+  theme(legend.position = "none")
+
+plotz1
+
+#Saving the plots in tiff resolution
+tiff(file = "ESC year.tiff", width=18, height=9, units="in", res=200)
+plotz1
+# Close device
+dev.off()
+
+# E coli total
+plotz <- ggplot(dat15, aes(x=year, y=propp, color = country)) +
+  geom_line(size = 1.0) + 
+  xlab("") + ylab("ESC-R E. coli (%") #+ facet_grid(country ~ .)
+
+plotz
+
+
+# Salmonella total
+plots <- ggplot(dat1, aes(x=year, y=propp, color = country)) +
+  geom_line(size = 1.5) + 
+  xlab("") + ylab("ESC-R Salmonella (%)") #+ facet_grid(country ~ .)
+
+plots
+
+```
+
+
+
+
+------------------------------------------------------------------------------------------------------
+<left><span style="color:DODGERBLUE"><h3>**Forecasting using ARIMA MOdel**</h3></span></center>
+-------------------------------------------------------------------------------------------------------
+**Time series plots for Salmonella**
+
+```{r echo=FALSE}
+
+#https://people.duke.edu/~rnau/411arim.htm
+#https://people.duke.edu/~rnau/Notes_on_nonseasonal_ARIMA_models--Robert_Nau.pdf
+
+windowsFonts(B = windowsFont("TImes New Roman"))
+
+# Time series plot using ggplot
+plot_series <- ggplot(dat1, aes(x=year, y=propp)) +
+  geom_line() + facet_wrap(. ~ country ) + xlab("Year") + ylab("ESC-R Salmonella enterica (%)") + theme(text = element_text(family = "B"))
+  
+  
+plot_series
+
+
+vam <- dat1 %>%
+  dplyr::select(country, year, propp) %>% #`ESC-R Salmonella` =
+  spread(country, propp) 
+
+#%>%
+#  mutate(N = seq(1,9))
+
+
+can <- ts(vam$Canada, start = c(2002, 1), frequency = 1)
+den <- ts(vam$Denmark, start = c(2002, 1), frequency = 1)
+fin <- ts(vam$Finland, start = c(2002, 1), frequency = 1)
+jap <- ts(vam$Japan, start = c(2002, 1), frequency = 1)
+nedd <- ts(vam$Netherland, start = c(2002, 1), frequency = 1)
+norw <- ts(vam$Norway, start = c(2002, 1), frequency = 1)
+swed <- ts(vam$Sweden, start = c(2002, 1), frequency = 1)
+uk <- ts(vam$UK, start = c(2002, 1), frequency = 1)
+us <- ts(vam$USA, start = c(2002, 1), frequency = 1)
+
+#Saving the plots in tiff resolution
+tiff(file = "Salmonella trend.tiff", width=8, height=6, units="in", res=200)
+par(mfrow=c(3,3))
+
+plot(can,
+     main="Canada",
+     col="red", 
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+
+plot(den,
+     main="Denmark",
+     col="blue",
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+plot(fin,
+     main="Finland",
+     col="#FF00CC",
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+plot(jap,
+     main="Japan",
+     col="green",
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+plot(nedd,
+     main="Netherland",
+     col="orange", 
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+plot(norw,
+     main="Norway",
+     col="black",
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+plot(swed,
+     main="Sweden",
+     col="#FF3300CC", 
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+
+plot(uk,
+     main="UK",
+     col="maroon",
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+plot(us,
+     main="USA",
+     col="#009999",
+     xlab="Year",
+     ylab="ESC-R Salmonella (%)",
+     ylim=c(0,30), family = "B")
+
+
+
+# Close device
+dev.off()
+#par(mfrow=c(1,1))
+```
+```{r echo=FALSE}
+
+
+#This model is actually slightly better than the model identified by auto.arima() (with an AICc value of 340.67 compared to 342.08). The auto.arima() function did not find this model because it does not consider all possible models in its search. You can make it work harder by using the arguments stepwise=FALSE and approximation=FALSE.We also use the argument seasonal=FALSE to prevent it searching for seasonal ARIMA models
+
+
+# Auto ARIMA model selection 
+c_arima <- auto.arima(can, trace=TRUE, stepwise=FALSE, approximation=FALSE, seasonal=FALSE)
+c_forc <- forecast(c_arima, level = c(95), h = 5)
+a1 <- autoplot(c_forc, xlab = "Year", ylab = "Canada ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+
+
+
+d_arima <- auto.arima(den, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+d_forc <- forecast(d_arima, level = c(95), h = 12)
+b1 <- autoplot(d_forc, xlab = "Year", ylab = "Denmark ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+f_arima <- auto.arima(fin, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+f_forc <- forecast(f_arima, level = c(95), h = 12)
+c1 <- autoplot(f_forc, xlab = "Year", ylab = "Finland ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+j_arima <- auto.arima(jap, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+j_forc <- forecast(j_arima, level = c(95), h = 12)
+d1 <- autoplot(j_forc, xlab = "Year", ylab = "Japan ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+n_arima <- auto.arima(nedd, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+n_forc <- forecast(n_arima, level = c(95), h = 12)
+e1 <- autoplot(n_forc, xlab = "Year", ylab = "Netherland ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+no_arima <- auto.arima(norw, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+no_forc <- forecast(no_arima, level = c(95), h = 12)
+f1 <- autoplot(no_forc, xlab = "Year", ylab = "Norway ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+sw_arima <- auto.arima(swed, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+sw_forc <- forecast(sw_arima, level = c(95), h = 12)
+g1 <- autoplot(sw_forc, xlab = "Year", ylab = "Sweden ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+
+uk_arima <- auto.arima(uk, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+uk_forc <- forecast(uk_arima, level = c(95), h = 12)
+h1 <- autoplot(uk_forc, xlab = "Year", ylab = "UK ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+
+us_arima <- auto.arima(us, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+us_forc <- forecast(us_arima, level = c(95), h = 12)
+i1 <- autoplot(us_forc, xlab = "Year", ylab = "USA ESC-R Salmonella(%)", alpha = 0.5)+ theme(text = element_text(family = "A"))
+
+
+
+
+```
+
+
+
+```{r echo=FALSE, fig.height=9, fig.width=12}
+
+#Saving the plots in tiff resolution
+tiff(file = "Salmonella ARIMA.tiff", width=12, height=8, units="in", res=200)
+
+ par(mfrow=c(3,3))
+
+library(patchwork)
+a1 + b1 + c1 +d1 + e1 + f1+ g1 + h1 + i1
+#autoplot(cho_forc)
+#autoplot(sh_forc)
+
+dev.off()
+
+a1 + b1 + c1 +d1 + e1 + f1+ g1 + h1 + i1
+
+```
+
+
+<p style="page-break-before: always">
+
+
+**Predicitng the values of forecasted trend**
+```{r}
+
+
+# Predicted values with 95% CI
+predDF <- summary(j_forc)
+print(predDF)
+
+predDF2 <- summary(us_forc)
+print(predDF2)
+
+predDF3 <- summary(n_forc)
+print(predDF3)
+
+
+
+```
+
+
+
+**Time series plots for E. coli**
+
+```{r echo=FALSE}
+
+windowsFonts(B = windowsFont("TImes New Roman"))
+
+
+# Time series plot using ggplot
+plot_s <- ggplot(dat15, aes(x=year, y=propp)) +
+  geom_line() + facet_wrap(. ~ country ) + xlab("Year") + ylab("ESC-R E. coli (%)")+ theme(text = element_text(family = "B"))
+  
+  
+plot_s
+
+
+vam <- dat15 %>%
+  dplyr::select(country, year, propp) %>% #`ESC-R Salmonella` =
+  spread(country, propp) 
+
+#%>%
+#  mutate(N = seq(1,9))
+
+
+can <- ts(vam$Canada, start = c(2002, 1), frequency = 1)
+den <- ts(vam$Denmark, start = c(2002, 1), frequency = 1)
+fin <- ts(vam$Finland, start = c(2002, 1), frequency = 1)
+jap <- ts(vam$Japan, start = c(2002, 1), frequency = 1)
+nedd <- ts(vam$Netherland, start = c(2002, 1), frequency = 1)
+norw <- ts(vam$Norway, start = c(2002, 1), frequency = 1)
+swed <- ts(vam$Sweden, start = c(2002, 1), frequency = 1)
+uk <- ts(vam$UK, start = c(2002, 1), frequency = 1)
+us <- ts(vam$USA, start = c(2002, 1), frequency = 1)
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoli trend.tiff", width=8, height=6, units="in", res=200)
+par(mfrow=c(3,3))
+
+plot(can,
+     main="Canada",
+     col="red", 
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+
+plot(den,
+     main="Denmark",
+     col="blue",
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+plot(fin,
+     main="Finland",
+     col="#FF00CC",
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+plot(jap,
+     main="Japan",
+     col="green",
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+plot(nedd,
+     main="Netherland",
+     col="orange", 
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+plot(norw,
+     main="Norway",
+     col="black",
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+plot(swed,
+     main="Sweden",
+     col="#FF3300CC", 
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+
+plot(uk,
+     main="UK",
+     col="maroon",
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+plot(us,
+     main="USA",
+     col="#009999",
+     xlab="Year",
+     ylab="ESC-R E. coli (%)",
+     ylim=c(0,20), family = "B")
+
+dev.off()
+
+```
+
+
+**E coli Auto Arima model**
+
+```{r echo=FALSE}
+
+
+# Auto ARIMA model selection 
+c_arima1 <- auto.arima(can, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+c_forc1 <- forecast(c_arima1, level = c(95), h = 5)
+a <- autoplot(c_forc1, xlab = "Year", ylab = "Canada ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+
+
+
+d_arima1 <- auto.arima(den, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+d_forc1 <- forecast(d_arima1, level = c(95), h = 12)
+b <- autoplot(d_forc1, xlab = "Year", ylab = "Denmark ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+f_arima1 <- auto.arima(fin, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+f_forc1 <- forecast(f_arima1, level = c(95), h = 12)
+c <- autoplot(f_forc1, xlab = "Year", ylab = "Finland ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+j_arima1 <- auto.arima(jap, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+j_forc1 <- forecast(j_arima1, level = c(95), h = 12)
+d <- autoplot(j_forc1, xlab = "Year", ylab = "Japan ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+n_arima1 <- auto.arima(nedd, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+n_forc1 <- forecast(n_arima1, level = c(95), h = 12)
+e <- autoplot(n_forc1, xlab = "Year", ylab = "Netherland ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+no_arima1 <- auto.arima(norw, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+no_forc1 <- forecast(no_arima1, level = c(95), h = 12)
+f <- autoplot(no_forc1, xlab = "Year", ylab = "Norway ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+sw_arima1 <- auto.arima(swed, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+sw_forc1 <- forecast(sw_arima1, level = c(95), h = 12)
+g <- autoplot(sw_forc1, xlab = "Year", ylab = "Sweden ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+
+uk_arima1 <- auto.arima(uk, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+uk_forc1 <- forecast(uk_arima1, level = c(95), h = 12)
+h <- autoplot(uk_forc1, xlab = "Year", ylab = "UK ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+
+us_arima1 <- auto.arima(us, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+us_forc1 <- forecast(us_arima1, level = c(95), h = 12)
+i <- autoplot(us_forc1, xlab = "Year", ylab = "USA ESC-R E. coli (%)", alpha = 0.5)+ theme(text = element_text(family = "B"))
+
+
+```
+
+
+```{r echo=FALSE, fig.height=6, fig.width=9}
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoli ARIMA.tiff", width=12, height=6, units="in", res=200)
+ par(mfrow=c(3,3))
+
+library(patchwork)
+a + b + c +d + e + f+ g + h + i
+#autoplot(cho_forc)
+#autoplot(sh_forc)
+
+dev.off()
+
+a + b + c +d + e + f+ g + h + i
+
+```
+
+**Forecasted values for non-selective ESC -R E. coli**
+
+```{r}
+
+
+
+
+sw_arima
+coeftest(sw_arima)
+
+
+# Predicted values with 95% CI
+predDF4 <- summary(j_forc1)
+print(predDF4)
+
+predDF5 <- summary(us_forc1)
+print(predDF5)
+
+predDF6 <- summary(n_forc1)
+print(predDF6)
+
+predDF7 <- summary(uk_forc1)
+print(predDF7)
+      
+      
+      
+      
+      
+      
+```
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+# ESC-R E. coli selective resistance data
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+**Host specific beta regression**
+  
+```{r}
+
+library(readxl)
+
+dataa <- read_excel("global ESC work.xlsx", sheet = "selective ecoli")
+
+
+names(dataa) <- tolower(names(dataa))
+  
+datb <- dataa %>%
+  mutate(prop = round((prop), 3),
+         perc = round((perc), 3))
+
+
+
+data_beta12 <- datb %>%
+  filter(host != "animal")
+
+
+#library(betareg)
+#model_beta12 <- betareg(prop ~ country + year + host, data = data_beta12) # too many zero so model not converging
+#summary(model_beta12)
+#hist(data_beta12$prop) # alot of zeros
+
+
+```
+
+
+# Country with host specific data
+
+```{r}
+#Country with host specific data
+#Transformation to take care of zeros
+data_beta12$`sESC-R Ecoli` <- (data_beta12$prop*(data_beta12$total-1) + 0.5)/data_beta12$total
+
+library(betareg)
+
+data_beta12$prop <- as.numeric(data_beta12$prop)
+data_beta12$country <- as.factor(data_beta12$country)
+data_beta12$host <- as.factor(data_beta12$host)
+data_beta12$year <- as.numeric(data_beta12$year)
+#data_beta12$`ESC-R Ecoli` <- as.numeric(data_beta12$`ESC-R Ecoli`)
+
+#Model
+model_beta12 <- betareg(`sESC-R Ecoli` ~ country+year+host, data = data_beta12)
+summary(model_beta12)
+
+
+# Odds ratio
+exp(coef(model_beta12))
+exp(cbind(OR = coef(model_beta12), confint(model_beta12)))
+
+library(sjPlot)
+
+plot_model(model_beta12, vline.color = "red", show.values = TRUE, value.offset = .3)
+
+```
+
+
+**Beta-regression model for selective ESC-R Escherichia coli: National data**
+
+```{r}
+
+  
+dat15a <- datb %>%
+  filter(country != "Japan") %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 3), 
+  #mutate(prop = (posv/N),
+         propp = prop*100)
+
+
+
+#Transformation to take care of zeros
+dat15a$`sESC-R Ecoli` <- (dat15a$prop*(dat15a$N-1) + 0.5)/dat15a$N
+
+dat15a$year <- as.numeric(dat15a$year)
+
+dat15a$country <- as.factor(dat15a$country)
+
+
+
+
+
+#Model
+
+model_bba <- betareg(`sESC-R Ecoli` ~ country + year, data = dat15a) 
+summary(model_bba)
+
+
+model_bb <- betareg(`sESC-R Ecoli` ~ country * year, data = dat15a) 
+summary(model_bb)
+
+AIC(model_bba, model_bb) # model_bb has lower AIC 
+
+
+coef(model_bb)
+vcov(model_bb)
+plot(model_bb)
+cooks.distance(model_bb)
+gleverage(model_bb)
+model.frame(model_bb)
+#model.matrix(model_bb)
+library(lmtest)
+waldtest(model_bb)
+#lrtest(model_bett5, model_bb)
+coeftest(model_bb)
+bptest(model_bb)
+
+# Odds ratio
+exp(coef(model_bb))
+exp(cbind(OR = coef(model_bb), confint(model_bb)))
+
+
+#Wald test of the predictors
+library(aod)
+#wald.test(b = coef(mod_salm), Sigma = vcov(mod_salm), Terms = 2:4) #Terms tells R which terms in the model are to be tested, in this case, terms 2, 3, 4 correspond to the house dummy variable (intercept =1), are the three terms for the levels of rank.
+wald.test(b = coef(model_bb), Sigma = vcov(model_bb), Terms = 2:6) #country
+wald.test(b = coef(model_bb), Sigma = vcov(model_bb), Terms = 8:12) #country year
+wald.test(b = coef(model_bb), Sigma = vcov(model_bb), Terms = 7:7) #year
+
+# COnvert to Odds ratio, standard error 
+model.d2 <- broom::tidy(model_bb)  # Convert model to dataframe for easy manipulation
+model.d2
+
+
+model2 <- model.d2 %>% 
+  mutate(or = exp(estimate),
+         var.diag = diag(vcov(model_bb)),
+         or.se = sqrt(or^2 * var.diag))
+
+model2
+
+
+
+#Interaction plots
+plot11 <- plot_model(model_bb, type = "pred", terms = c("year", "country"), transform = TRUE, title = "") +  scale_y_continuous(limits = c(0, 0.40))+ labs(x = "Year") + labs(y = "Predicted proportion of selective ESC-R E.coli") + theme(text = element_text(family = "A"))
+plot11
+
+
+
+
+#plot12 <- plot_model(model_bb, type = "pred", terms = c("year", "country")) +  scale_y_continuous(limits = c(0, 0.13))
+#plot12
+
+#plot13 <- plot_model(model_bb, type = "pred", terms = c("year", "country"), grid = TRUE) +  scale_y_continuous(limits = c(0, 0.15))
+#plot13
+
+
+#Saving the plots in tiff resolution
+tiff(file = "ESC-R Ecoli selective total.tiff", width=6, height=4, units="in", res=200)
+#Plot
+plot11
+# Close device
+dev.off()
+
+
+#------------------------------------------------------------------------------------------------------
+
+```
+
+# Extracting selective Ecoli data
+
+```{r}
+
+datx <- datb %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 3), 
+  #mutate(prop = (posv/N),
+         propp = prop*100)
+
+windowsFonts(A = windowsFont("Times New Roman"))
+library(ggpubr)
+
+
+ecoli2_period <- ggboxplot(datx, x = "country", y = "propp", 
+          color = "country",
+          ylab = "Selective ESC-R E. coli (%)", xlab = "Country", title = "", ggtheme = coord_flip()) + theme(text = element_text(family = "A"))
+
+
+
+ecoli2_period
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Boxplot selective ecoli PeriodPrev.tiff", width=6, height=4, units="in", res=500)
+#Plot
+
+ecoli2_period
+dev.off()
+
+
+```
+
+
+
+```{r}
+
+
+# Data exporting of table
+data_ecolis_tot <- datx %>%
+  dplyr::select(country, year, propp) %>%
+  spread(country, propp)
+
+data_ecolis_n <- datx %>%
+  dplyr::select(country, year, N) %>%
+  spread(country, N)
+
+data_ecolips <- write.csv(data_ecolis_tot, "Selective Ecoli propn.csv")
+data_ecolins <- write.csv(data_ecolis_n, "Selective Ecoli total.csv")
+
+```
+
+
+
+## Period prevalence of selective ESC-R E. coli
+
+```{r}
+
+
+dat_period_ecoli2 <- datx %>%
+  group_by(country) %>%
+  summarise(posvv = sum(posv),
+            NN= sum(N)) %>%
+  mutate(prop = round((posvv/NN), 4),
+         propp = prop*100)
+
+dat_period_ecoli2$Country <- dat_period_ecoli2$country
+
+
+library(meta)
+
+plotset2 <- metaprop(posvv, NN, studlab = Country, data = dat_period_ecoli2)
+
+plotset2
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+
+forest.meta(plotset2, digits = 3)
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot selective ecoli PeriodPrev.tiff", width=7, height=4, units="in", res=500)
+#Plot
+forest.meta(plotset2, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", overall = FALSE, hetstat = F, smlab = "Selective ESC-R E. coli")
+
+dev.off()
+
+
+
+```
+
+
+**Correlation analysis between ESC-R and year for selective ESCR E. coli**
+```{r, fig.height=8, fig.width=9}
+
+## Correlation analysis for ESC-S-R E. coli
+dat15a$year <- as.numeric(dat15a$year)
+
+
+# All the country together
+ggscatter(dat15a, x = "year", y = "propp", size = 0.3,
+          color = "country", palette = "jco",
+          facet.by = "country", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE, xlab = "Year", ylab = "ESC-R E. coli (%)") +
+  stat_cor(aes(color = country), method = "spearman", label.y = 6)
+
+```
+
+
+```{r}
+
+
+# Netherland
+neth1 <- dat15a %>%
+  filter(country == "Netherland")
+
+#year
+ggscatter(neth1, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman", 
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Netherland")
+
+#cor(neth1$year, neth1$propp, method = c("pearson", "kendall", "spearman"))
+
+#Denmark
+den1 <- dat15a %>%
+  filter(country == "Denmark")
+
+#Year
+ggscatter(den1, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Denmark")
+
+#Norway
+nor1 <- dat15a %>%
+  filter(country == "Norway")
+
+#year
+ggscatter(nor1, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Norway")
+
+#Sweden
+swe1 <- dat15a %>%
+  filter(country == "Sweden")
+
+#YEar
+ggscatter(swe1, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Sweden")
+
+
+#UK
+ku1 <- dat15a %>%
+  filter(country == "UK")
+
+#Year
+ggscatter(ku1, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "UK")
+
+
+#Finland
+fn1 <- dat15a %>%
+  filter(country == "Finland")
+
+#Year
+ggscatter(fn1, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Finland")
+
+
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoli selective ESCRyear.tiff", width=18, height=9, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(2, 3)))
+print(cc1, vp = vplayout(1, 1))
+print(cc2, vp = vplayout(1, 2))
+print(cc3, vp = vplayout(1, 3))
+print(cc4, vp = vplayout(2, 1))
+print(cc5, vp = vplayout(2, 2))
+print(cc6, vp = vplayout(2, 3))
+
+
+
+# Close device
+dev.off()
+
+
+
+
+```
+
+
+### Selective ESC-R year correlation plot
+
+```{r}
+
+cor_use_data <- left_join(dat15a, esc, by = c("country", "year"))
+
+# Netherland
+neth11 <- cor_use_data %>%
+  filter(country == "Netherland")
+
+#Denmark
+den11 <- cor_use_data %>%
+  filter(country == "Denmark")
+
+#Finland
+fn11 <- cor_use_data %>%
+  filter(country == "Finland")
+#Norway
+nor11 <- cor_use_data %>%
+  filter(country == "Norway")
+
+#Sweden
+swe11 <- cor_use_data %>%
+  filter(country == "Sweden")
+
+#UK
+ku11 <- cor_use_data %>%
+  filter(country == "UK")
+
+
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+#Year
+ccc1 <- ggscatter(den11, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Denmark")+ theme(text = element_text(family = "A"))
+
+#Year
+ccc2 <- ggscatter(fn11, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Finland")+ theme(text = element_text(family = "A"))
+
+#year
+ccc3 <- ggscatter(neth11, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman", 
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Netherland")+ theme(text = element_text(family = "A"))
+
+#cor(neth1$year, neth1$propp, method = c("pearson", "kendall", "spearman"))
+
+#year
+ccc4 <- ggscatter(nor11, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Norway")+ theme(text = element_text(family = "A"))
+
+
+#YEar
+ccc5 <- ggscatter(swe11, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "Sweden")+ theme(text = element_text(family = "A"))
+
+
+
+#Year
+ccc6 <- ggscatter(ku11, x = "year", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Year", ylab = "Selective ESC-R E. coli (%)", title = "UK")+ theme(text = element_text(family = "A"))
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoli selective year.tiff", width=18, height=9, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(2, 3)))
+print(ccc1, vp = vplayout(1, 1))
+print(ccc2, vp = vplayout(1, 2))
+print(ccc3, vp = vplayout(1, 3))
+print(ccc4, vp = vplayout(2, 1))
+print(ccc5, vp = vplayout(2, 2))
+print(ccc6, vp = vplayout(2, 3))
+
+
+
+# Close device
+dev.off()
+
+
+
+
+
+
+
+```
+
+### Selective ESC-R USe correlation plot
+
+```{r}
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+#USe
+cc1 <- ggscatter(den11, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "Selective ESC-R E. coli (%)", title = "Denmark")+ theme(text = element_text(family = "A"))
+
+
+
+#USe
+cc2 <- ggscatter(fn11, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "Selective ESC-R E. coli (%)", title = "Finland")+ theme(text = element_text(family = "A"))
+
+#USe
+cc3 <- ggscatter(neth11, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman", 
+          xlab = "ESC use (mg/PCU)", ylab = "Selective ESC-R E. coli (%)", title = "Netherland")+ theme(text = element_text(family = "A"))
+
+#cor(neth1$year, neth1$propp, method = c("pearson", "kendall", "spearman"))
+
+#USe
+cc4 <- ggscatter(nor11, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "Selective ESC-R E. coli (%)", title = "Norway")+ theme(text = element_text(family = "A"))
+
+
+#USe
+cc5 <- ggscatter(swe11, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "Selective ESC-R E. coli (%)", title = "Sweden")+ theme(text = element_text(family = "A"))
+
+
+
+#USe
+cc6 <- ggscatter(ku11, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "Selective ESC-R E. coli (%)", title = "UK")+ theme(text = element_text(family = "A"))
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Ecoli selective ESC use.tiff", width=18, height=9, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(2, 3)))
+print(cc1, vp = vplayout(1, 1))
+print(cc2, vp = vplayout(1, 2))
+print(cc3, vp = vplayout(1, 3))
+print(cc4, vp = vplayout(2, 1))
+print(cc5, vp = vplayout(2, 2))
+print(cc6, vp = vplayout(2, 3))
+
+
+
+# Close device
+dev.off()
+
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Netherland Ecoliselect ESC use.tiff", width=6, height=4, units="in", res=200)
+
+# 4 figures arranged in 2 rows and 2 columns
+
+cc3
+
+
+# Close device
+dev.off()
+
+
+cor_total <- cor_use_data %>% 
+  group_by(country) %>% 
+  
+
+
+#USe
+cc1x <- ggscatter(cor_use_data, x = "mg/pcu", y = "propp", 
+          add = "reg.line", conf.int = TRUE, label = "country", facet.by = "year",
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "ESC use (mg/PCU)", ylab = "Selective ESC-R E. coli (%)", title = "")
+
+cc1x
+
+
+```
+
+
+
+**Time series plots for ESC-S-R-E. coli**
+
+```{r echo=FALSE, fig.width=9, fig.height=5}
+
+
+# Time series plot using ggplot
+plot_series <- ggplot(dat15a, aes(x=year, y=propp)) +
+  geom_line() + facet_wrap(. ~ country ) + xlab("Year") + ylab("ESC-S-R E. coli (%)") +
+theme(legend.position = "none")
+  
+plot_series
+
+
+# Time series plot using ggplot
+plot_ss <- ggplot(dat15a, aes(x=year, y=propp, color = country)) +
+  geom_line(size = 1) + xlab("Year") + ylab("ESC-R E. coli (%)") 
+  
+plot_ss
+
+
+
+
+
+
+# Time series plot using tseries
+vam <- dat15a %>%
+  dplyr::select(country, year, propp) %>% 
+  spread(country, propp) 
+
+#%>%
+#  mutate(N = seq(1,9))
+
+
+
+denx <- ts(vam$Denmark, start = c(2007, 1), frequency = 1)
+finx <- ts(vam$Finland, start = c(2007, 1), frequency = 1)
+neddx <- ts(vam$Netherland, start = c(2007, 1), frequency = 1)
+norwx <- ts(vam$Norway, start = c(2007, 1), frequency = 1)
+swedx <- ts(vam$Sweden, start = c(2007, 1), frequency = 1)
+ukx <- ts(vam$UK, start = c(2007, 1), frequency = 1)
+
+tiff(file = "Ecoli selective trend.tiff", width=8, height=6, units="in", res=200)
+
+
+par(mfrow=c(2,3))
+
+plot(denx,
+     main="Denmark",
+     col="blue",
+     xlab="Year",
+     ylab="ESC-S-R E. coli (%)",
+     ylim=c(0,40), family = "B")
+
+plot(finx,
+     main="Finland",
+     col="#FF00CC",
+     xlab="Year",
+     ylab="ESC-S-R E. coli (%)",
+     ylim=c(0,40), family = "B")
+
+
+plot(neddx,
+     main="Netherland",
+     col="orange", 
+     xlab="Year",
+     ylab="ESC-S-R E. coli (%)",
+     ylim=c(0,40), family = "B")
+
+plot(norwx,
+     main="Norway",
+     col="black",
+     xlab="Year",
+     ylab="ESC-S-R E. coli (%)",
+     ylim=c(0,40), family = "B")
+
+plot(swedx,
+     main="Sweden",
+     col="#FF3300CC", 
+     xlab="Year",
+     ylab="ESC-S-R E. coli (%)",
+     ylim=c(0,40), family = "B")
+
+
+plot(ukx,
+     main="UK",
+     col="maroon",
+     xlab="Year",
+     ylab="ESC-S-R E. coli (%)",
+     ylim=c(0,40), family = "B")
+
+
+dev.off()
+
+```
+
+
+**selective E coli Auto Arima model**
+
+```{r echo=FALSE}
+
+
+# Auto ARIMA model selection 
+windowsFonts(B = windowsFont("Times New Roman"))
+
+
+d_arimax <- auto.arima(denx, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+d_forcx <- forecast(d_arimax, level = c(95), h = 12)
+b1 <- autoplot(d_forcx, xlab = "Year", ylab = "Denmark ESC-R E. coli (%)")+ theme(text = element_text(family = "B"))
+
+f_arimax <- auto.arima(finx, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+f_forcx <- forecast(f_arimax, level = c(95), h = 12)
+c1 <- autoplot(f_forcx, xlab = "Year", ylab = "Finland ESC-R E. coli (%)")+ theme(text = element_text(family = "B"))
+
+
+n_arimax <- auto.arima(neddx, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+n_forcx <- forecast(n_arimax, level = c(95), h = 12)
+e1 <- autoplot(n_forcx, xlab = "Year", ylab = "Netherland ESC-R E. coli (%)")+ theme(text = element_text(family = "B"))
+
+no_arimax <- auto.arima(norwx, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+no_forcx <- forecast(no_arimax, level = c(95), h = 12)
+f1 <- autoplot(no_forcx, xlab = "Year", ylab = "Norway ESC-R E. coli (%)")+ theme(text = element_text(family = "B"))
+
+sw_arimax <- auto.arima(swedx, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+sw_forcx <- forecast(sw_arimax, level = c(95), h = 12)
+g1 <- autoplot(sw_forcx, xlab = "Year", ylab = "Sweden ESC-R E. coli (%)")+ theme(text = element_text(family = "B"))
+
+
+uk_arimax <- auto.arima(ukx, trace=TRUE, stepwise=FALSE, approximation=FALSE)
+uk_forcx <- forecast(uk_arimax, level = c(95), h = 12)
+h1 <- autoplot(uk_forcx, xlab = "Year", ylab = "UK ESC-R E. coli (%)")+ theme(text = element_text(family = "B"))
+h1
+
+```
+
+**Predicted values for selective ESC -R E. coli**
+
+```{r}
+
+# Predicted values with 95% CI
+swx_forc <- as.data.frame(forecast(sw_arimax, level = c(95), h = 12))
+swx_forc
+
+nx_forc <- as.data.frame(forecast(n_arimax, level = c(95), h = 12))
+nx_forc
+
+```
+
+
+```{r echo=FALSE, fig.height=6, fig.width=9}
+tiff(file = "Ecoli selective ARIMA.tiff", width=12, height=6, units="in", res=500)
+ par(mfrow=c(3,3))
+
+library(patchwork)
+b1 + c1 + e1 + f1 + g1 + h1
+#autoplot(cho_forc)
+#autoplot(sh_forc)
+
+dev.off()
+# Most country data are uncorrelated with white noise, this maybe due to the small number of time points
+
+```
+
+
+
+---------------------------------------------------------------------------------------------------
+# ESC Resistance gene patterns
+-----------------------------------------------------------------------------------------------------
+
+
+
+
+##CTXM
+```{r}
+
+#CTXM
+library(readxl)
+#library(metafor)
+ctx <- read_excel("global ESC work.xlsx", sheet = "ctxm")
+
+dt_ctx <- ctx %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive, na.rm = T),
+            N= sum(total, na.rm = T),
+            ct_total = sum(ct)) %>%
+  mutate(prop = round((ct_total/posv), 4),
+         propp_ctxm = prop*100)
+
+
+ctx_spread <- dt_ctx %>% 
+  dplyr::select(country, year, propp_ctxm) %>%
+  spread(country, propp_ctxm)
+
+
+posv_spread <- dt_ctx %>% 
+  dplyr::select(country, year, posv) %>%
+  spread(country, posv)
+
+#Export the ctxm data
+ctxp <- write.csv(ctx_spread, "ctxm propn.csv")
+ctxn <- write.csv(posv_spread, "ctxm positive.csv")
+
+# Resistance patterns
+
+ct_pat <- ctx %>% 
+  group_by(country, year) %>% 
+  summarise(ctxm1 = sum(ctxm1, na.rm = T),
+            ctxm2 = sum(ctxm2, na.rm = T),
+            ctxm3 = sum(ctxm3, na.rm = T),
+            ctxm9 = sum(ctxm9, na.rm = T),
+            ctxm14 = sum(ctxm14, na.rm = T),
+            ctxm15 = sum(ctxm15, na.rm = T),
+            ctxm32 = sum(ctxm32, na.rm = T),
+            ctxm55 = sum(ctxm55, na.rm = T),
+            ctxm65 = sum(ctxm65, na.rm = T),
+            ctxm115 = sum(ctxm115, na.rm = T),
+            ctxm175 = sum(ctxm175, na.rm = T),
+            ctxm27 = sum(ctxm27, na.rm = T),
+            ctxm8 = sum(ctxm8, na.rm = T))
+
+
+ # dplyr::select(country, year, contains("xm"))
+ 
+
+ct_pat$ctxm1[ct_pat$ctxm1 > 0] <- "CTXM-1"
+ct_pat$ctxm2[ct_pat$ctxm2 > 0] <- "CTXM-2"
+ct_pat$ctxm3[ct_pat$ctxm3 > 0] <- "CTXM-3"
+ct_pat$ctxm9[ct_pat$ctxm9 > 0] <- "CTXM-9"
+ct_pat$ctxm14[ct_pat$ctxm14 > 0] <- "CTXM-14"
+ct_pat$ctxm15[ct_pat$ctxm15 > 0] <- "CTXM-15"
+ct_pat$ctxm32[ct_pat$ctxm32 > 0] <- "CTXM-32"
+ct_pat$ctxm55[ct_pat$ctxm55 > 0] <- "CTXM-55"
+ct_pat$ctxm65[ct_pat$ctxm65 > 0] <- "CTXM-65"
+ct_pat$ctxm115[ct_pat$ctxm115 > 0] <- "CTXM-115"
+ct_pat$ctxm175[ct_pat$ctxm175 > 0] <- "CTXM-175"
+ct_pat$ctxm27[ct_pat$ctxm27 > 0] <- "CTXM-27"
+ct_pat$ctxm8[ct_pat$ctxm8 > 0] <- "CTXM-8"
+
+
+ct_pat$patn <- str_c(ct_pat$ctxm1, ct_pat$ctxm2, ct_pat$ctxm3, ct_pat$ctxm9, ct_pat$ctxm14, ct_pat$ctxm15, ct_pat$ctxm32, ct_pat$ctxm55, ct_pat$ctxm65, ct_pat$ctxm115, ct_pat$ctxm175, ct_pat$ctxm27, ct_pat$ctxm8)
+
+
+ct_P <- write.csv(ct_pat, "ctxm pattern.csv")
+
+
+data_ctxm <- left_join(dt_ctx, ct_pat, by =c("country", "year"))
+
+
+ct_Pa <- write.csv(data_ctxm, "ctxm proportion pattern.csv")
+
+```
+
+## CMY
+
+```{r}
+
+#------------------------------------------------------------------------------------------------------
+
+#CMY2
+ampc <- read_excel("global ESC work.xlsx", sheet = "ampc")
+
+dt_ampc <- ampc %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive, na.rm = T),
+            N= sum(total, na.rm = T),
+            ct_total = sum(cmy2)) %>%
+  mutate(prop = round((ct_total/posv), 4),
+         propp_cmy2 = prop*100)
+
+
+amp_spread <- dt_ampc %>%
+  dplyr::select(country, year, propp_cmy2) %>%
+  spread(country, propp_cmy2)
+
+
+ampn_spread <- dt_ampc %>% 
+  dplyr::select(country, year, posv) %>%
+  spread(country, posv)
+
+
+#Export the cmy2 data
+cmy2p <- write.csv(amp_spread, "cmy2 propn.csv")
+cmy2n <- write.csv(ampn_spread, "cmy2 positive.csv")
+
+
+# Resistance patterns
+
+cmy_pat <- ampc %>% 
+  group_by(country, year) %>% 
+  summarise(cmy = sum(cmy2, na.rm = T))
+
+
+cmy_pat$cmy[cmy_pat$cmy > 0] <- "CMY-2"
+cm_pt <- write.csv(cmy_pat, "CMY pattern.csv")
+
+
+
+data_cmy2 <- left_join(dt_ampc, cmy_pat, by =c("country", "year"))
+cm_pta <- write.csv(data_cmy2, "CMY proportion pattern.csv")
+
+
+
+```
+
+
+## SHV
+
+```{r}
+
+#------------------------------------------------------------------------------------------------------
+
+#SHV
+shv <- read_excel("global ESC work.xlsx", sheet = "shv")
+
+dt_shv <- shv %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive, na.rm = T),
+            N= sum(total, na.rm = T),
+            ct_total = sum(shv)) %>%
+  mutate(prop = round((ct_total/posv), 4),
+         propp_shv = prop*100)
+
+
+shv_spread <- dt_shv %>%
+  dplyr::select(country, year, propp_shv) %>%
+  spread(country, propp_shv)
+
+
+shvn_spread <- dt_shv %>% 
+  dplyr::select(country, year, posv) %>%
+  spread(country, posv)
+
+
+#Export the shv data
+shvp <- write.csv(shv_spread, "shv propn.csv")
+shvn <- write.csv(shvn_spread, "shv positive.csv")
+
+
+
+# Resistance patterns
+
+shv_pat <- shv %>% 
+  group_by(country, year) %>% 
+  summarise(shv12 = sum(shv12, na.rm = T),
+            shv2 = sum(shv2, na.rm = T))
+
+
+shv_pat$shv12[shv_pat$shv12 > 0] <- "SHV-12"
+shv_pat$shv2[shv_pat$shv2 > 0] <- "SHV-2"
+
+shv_pat$patn <- str_c(shv_pat$shv12, shv_pat$shv2)
+
+shvpt <- write.csv(shv_pat, "SHV resis pattern.csv")
+
+
+
+data_shv <- left_join(dt_shv, shv_pat, by =c("country", "year"))
+shvpta <- write.csv(data_shv, "SHV proportion resis pattern.csv")
+
+
+```
+
+
+## TEM
+
+
+```{r}
+
+#-------------------------------------------------------------------------------------------------------
+#TEM 
+tem <- read_excel("global ESC work.xlsx", sheet = "tem")
+
+
+dt_tem <- tem %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive),
+            N= sum(total),
+            ct_total = sum(tem)) %>%
+  mutate(prop = round((ct_total/posv), 4),
+         propp_tem = prop*100)
+
+
+tem_spread <- dt_tem %>%
+  dplyr::select(country, year, propp_tem) %>%
+  spread(country, propp_tem)
+
+
+
+# Total number of isolates
+
+tem_tot <- dt_tem %>%
+  dplyr::select(country, year, posv) %>% 
+  spread(country, posv)
+
+
+#Export the tem data
+temp <- write.csv(tem_spread, "tem propn.csv")
+temn <- write.csv(tem_tot, "tem positive.csv")
+
+
+# Resistance patterns
+
+tem_pat <- tem %>% 
+  group_by(country, year) %>% 
+  summarise(tem1 = sum(tem1, na.rm = T),
+            tem52 = sum(tem52, na.rm = T),
+            tem55 = sum(tem55, na.rm = T),
+            tem135 = sum(tem135, na.rm = T),
+            tem20 = sum(tem20, na.rm = T))
+
+
+
+
+tem_pat$tem1[tem_pat$tem1 >0] <- "TEM-1"
+tem_pat$tem52[tem_pat$tem52 >0] <- "TEM-52"
+tem_pat$tem55[tem_pat$tem55 >0] <- "TEM-55"
+tem_pat$tem135[tem_pat$tem135 >0] <- "TEM-135"
+tem_pat$tem20[tem_pat$tem20 >0] <- "TEM-20"
+
+
+
+tem_pat$tem_pt <- str_c(tem_pat$tem1, tem_pat$tem52, tem_pat$tem55, tem_pat$tem135, tem_pat$tem20)
+
+
+write.csv(tem_pat, "TEM resis gene pattern.csv")
+
+data_tem <- left_join(dt_tem, tem_pat, by =c("country", "year"))
+
+write.csv(data_tem, "TEM proportion resis gene pattern.csv")
+
+
+
+```
+
+
+### Forest plot for resistance proportion and resistance patterns
+
+```{r, fig.height=30}
+
+
+library(readxl)
+ctxm_proportion_pattern <- read_excel("ctxm proportion pattern.xlsx")
+#library(readr)
+ctpp <- ctxm_proportion_pattern
+
+
+str(ctpp)
+library(meta)
+
+plot1aa <- metaprop(Event, Total, studlab = Year, data = ctxm_proportion_pattern, subgroup = Country, subset = (is.na(out))) # Exclude countries with zero value as meta-analysis wont run with zero values. Exclude = NULL need to clarification
+
+plot1aa
+
+
+
+windowsFonts(A = windowsFont("Times New Roman"))
+#forest.meta(plot1a, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", overall = FALSE, hetstat = F, smlab = "ESC-R Escherichia coli") 
+
+
+
+forest_ctxm <- forest(plot1aa, leftcols = c("studlab", "Event", "Total", "blaCTX-M pattern"), fontfamily = "A", pooled.events = T)
+forest_ctxm
+
+tiff(file = "Ecoli CTXM.tiff", width=15, height=18, units="in", res=200)
+# par(mfrow=c(3,3))
+forest_ctxm <- forest(plot1aa, leftcols = c("studlab", "Event", "Total", "blaCTX-M pattern"), fontfamily = "A", pooled.events = T)
+
+dev.off()
+
+```
+
+
+```{r}
+
+#########################################################################################################################################
+library(readr)
+CMY <- read_csv("CMY proportion pattern.csv")
+
+plot_cmy <- metaprop(Event, Total, studlab = Year, data = CMY, subgroup = Country, subset = (!is.na(Event))) # Exclude countries with zero value as meta-analysis wont run with zero values. Exclude = NULL need to clarification
+
+plot_cmy
+
+forest_cmy <- forest(plot_cmy, leftcols = c("studlab", "Event", "Total", "blaCMY-2"), fontfamily = "A")
+forest_cmy
+
+tiff(file = "Ecoli CMY2.tiff", width=15, height=18, units="in", res=200)
+# par(mfrow=c(3,3))
+forest_cmy <- forest(plot_cmy, leftcols = c("studlab", "Event", "Total", "blaCMY-2"), fontfamily = "A")
+
+dev.off()
+
+
+
+```
+
+
+```{r}
+
+
+
+SHV <- read_excel("SHV proportion resis pattern.xlsx")
+
+plot_shv <- metaprop(Event, Total, studlab = Year, data = SHV, subgroup = Country, subset = (Event > 0)) # Exclude countries with zero value as meta-analysis wont run with zero values. Exclude = NULL need to clarification
+
+plot_shv
+
+forest_shv <- forest(plot_shv, leftcols = c("studlab", "Event", "Total", "blaSHV pattern"), fontfamily = "A")
+forest_shv
+
+tiff(file = "Ecoli SHV.tiff", width=10, height=10, units="in", res=200)
+# par(mfrow=c(3,3))
+forest_shv <- forest(plot_shv, leftcols = c("studlab", "Event", "Total", "blaSHV pattern"), fontfamily = "A")
+
+dev.off()
+
+```
+
+
+
+```{r}
+
+TEM <- read_csv("TEM proportion resis gene pattern.csv")
+
+plot_tem <- metaprop(Event, Total, studlab = Year, data = TEM, subgroup = Country, subset = (Event > 0)) # Exclude countries with zero value as meta-analysis wont run with zero values. Exclude = NULL need to clarification
+
+plot_tem
+
+forest_tem <- forest(plot_tem, leftcols = c("studlab", "Event", "Total", "blaTEM pattern"), fontfamily = "A")
+forest_tem
+
+tiff(file = "Ecoli TEM.tiff", width=10, height=12, units="in", res=200)
+# par(mfrow=c(3,3))
+forest_tem <- forest(plot_tem, leftcols = c("studlab", "Event", "Total", "blaTEM pattern"), fontfamily = "A")
+
+dev.off()
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+## Selective resistance E coli  values, proportion of resistance genes and resistance patterns
+
+
+```{r}
+
+genes <- read_excel("global ESC work.xlsx", sheet = "genes1")
+
+
+dt_genes <- genes %>%
+  group_by(country, year) %>%
+  summarise(posv = sum(positive, na.rm = T),
+            N= sum(total, na.rm = T),
+            ctxm1 = sum(ctxm1, na.rm = T),
+            ctxm2 = sum(ctxm2, na.rm = T),
+            ctxm3 = sum(ctxm3, na.rm = T),
+            ctxm9 = sum(ctxm9, na.rm = T),
+            ctxm14 = sum(ctxm14, na.rm = T),
+            ctxm15 = sum(ctxm15, na.rm = T),
+            ctxm32 = sum(ctxm32, na.rm = T),
+            ctxm55 = sum(ctxm55, na.rm = T),
+            ctxm65 = sum(ctxm65, na.rm = T),
+            ctxm115 = sum(ctxm115, na.rm = T),
+            ctxm175 = sum(ctxm175, na.rm = T),
+            ctxm27 = sum(ctxm27, na.rm = T),
+            ctxm8 = sum(ctxm8, na.rm = T),
+            cmy = sum(cmy2, na.rm = T),
+            shv12 = sum(shv12, na.rm = T),
+            shv2 = sum(shv2, na.rm = T),
+            tem1 = sum(tem1, na.rm = T),
+            tem52 = sum(tem52, na.rm = T),
+            tem55 = sum(tem55, na.rm = T),
+            tem135 = sum(tem135, na.rm = T),
+            tem20 = sum(tem20, na.rm = T))
+
+
+
+
+
+
+
+
+dt_genes$ctxm1[dt_genes$ctxm1 > 0] <- "CTXM-1"
+dt_genes$ctxm2[dt_genes$ctxm2 > 0] <- "CTXM-2"
+dt_genes$ctxm3[dt_genes$ctxm3 > 0] <- "CTXM-3"
+dt_genes$ctxm9[dt_genes$ctxm9 > 0] <- "CTXM-9"
+dt_genes$ctxm14[dt_genes$ctxm14 > 0] <- "CTXM-14"
+dt_genes$ctxm15[dt_genes$ctxm15 > 0] <- "CTXM-15"
+dt_genes$ctxm32[dt_genes$ctxm32 > 0] <- "CTXM-32"
+dt_genes$ctxm55[dt_genes$ctxm55 > 0] <- "CTXM-55"
+dt_genes$ctxm65[dt_genes$ctxm65 > 0] <- "CTXM-65"
+dt_genes$ctxm115[dt_genes$ctxm115 > 0] <- "CTXM-115"
+dt_genes$ctxm175[dt_genes$ctxm175 > 0] <- "CTXM-175"
+dt_genes$ctxm27[dt_genes$ctxm27 > 0] <- "CTXM-27"
+dt_genes$ctxm8[ct_pat$ctxm8 > 0] <- "CTXM-8"
+
+dt_genes$tem1[dt_genes$tem1 >0] <- "TEM-1"
+dt_genes$tem52[dt_genes$tem52 >0] <- "TEM-52"
+dt_genes$tem55[dt_genes$tem55 >0] <- "TEM-55"
+dt_genes$tem135[dt_genes$tem135 >0] <- "TEM-135"
+dt_genes$tem20[tem_pat$tem20 >0] <- "TEM-20"
+
+
+dt_genes$shv12[dt_genes$shv12 > 0] <- "SHV-12"
+dt_genes$shv2[shv_pat$shv2 > 0] <- "SHV-2"
+
+dt_genes$cmy[dt_genes$cmy > 0] <- "CMY-2"
+
+
+
+
+dt_genes$patn <- str_c(dt_genes$ctxm1, dt_genes$ctxm2, dt_genes$ctxm3, dt_genes$ctxm9, dt_genes$ctxm14, dt_genes$ctxm15, dt_genes$ctxm32, dt_genes$ctxm55, dt_genes$ctxm65, dt_genes$ctxm115, dt_genes$ctxm175, dt_genes$ctxm27, ct_pat$ctxm8, dt_genes$shv12, dt_genes$shv2, dt_genes$tem1, dt_genes$tem52, dt_genes$tem55, dt_genes$tem135, dt_genes$tem20, dt_genes$cmy)
+
+
+
+res_genes <- dt_genes %>%
+  dplyr::select(country, year, posv, N, patn)
+
+
+
+
+# Join the dat together
+
+#ctxm prop 
+dt_ctxx <- dt_ctx %>%
+  dplyr::select(everything(), -prop, -ct_total)
+
+#cmy2
+dt_ampcc <- dt_ampc %>%
+  dplyr::select(everything(), -prop, -ct_total)
+
+#tem prop
+dt_temm <- dt_tem %>%
+  dplyr::select(everything(), -prop, -ct_total)
+
+
+#shv prop
+dt_shvv <- dt_shv %>%
+  dplyr::select(everything(), -prop, -ct_total)
+
+
+
+data_xu <- left_join(datx, dt_ctxx, by =c("country", "year", "posv", "N"))
+
+data_xv <- left_join(data_xu, dt_ampcc, by =c("country", "year", "posv", "N"))
+data_xw <- left_join(data_xv, dt_temm, by =c("country", "year", "posv", "N"))
+
+data_xx <- left_join(data_xw, dt_shvv, by =c("country", "year", "posv", "N"))
+
+
+```
+
+## Selective resistance E coli  values, proportion of resistance genes and resistance patterns
+
+```{r}
+
+whole_data <- left_join(data_xx, res_genes, by =c("country", "year", "posv", "N"))
+
+
+write.csv(whole_data, "Selective ESC resistance genes pattern.csv")
+
+
+
+```
+
+
+```{r, fig.height=16}
+
+library(meta)
+
+str(whole_data)
+
+plot1aa <- metaprop(posv, N, studlab = year, data = whole_data, subgroup = country)
+
+plot1aa
+
+plot1a <- metaprop(posv, N, studlab = year, data = whole_data, subgroup = country, subset = (country %in% c("Denmark", "Finland", "Japan", "Netherland")))
+
+plot1a
+
+windowsFonts(A = windowsFont("Times New Roman"))
+forest.meta(plot1a, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", overall = FALSE, hetstat = F, smlab = "ESC-R Escherichia coli") #leftcols = c("studlab", "patn"),fontsize=10, layout="RevMan5", xlim = "symmetric", fontsize=15, , layout="JAMA" fontsize=15, layout="JAMA", , pooled.totals = F, pooled.events = F, fontsize=12,
+
+library(grid)
+
+
+p1 <- grid.grab()
+
+
+
+plot1b <- metaprop(posv, N, studlab = year, data = whole_data, subgroup = country, subset = (country %in% c("Norway", "Sweden", "UK")))
+
+plot1b
+
+
+
+forest.meta(plot1b, digits = 3, overall.hetstat = FALSE, test.overall.fixed = FALSE, test.subgroup = FALSE, pooled.events = T, fontfamily = "A", overall = FALSE, hetstat = F, smlab = "ESC-R Escherichia coli") #leftcols = c("studlab", "patn"),fontsize=10, layout="RevMan5", xlim = "symmetric",, fontsize=15, layout="JAMA", , pooled.totals = F, pooled.events = F, fontsize=12,
+
+p2 <- grid.grab()
+
+
+library(gridExtra)
+
+grid.newpage()
+
+grid.arrange(p1, p2, nrow = 1)
+
+
+
+
+
+
+
+#Saving the plots in tiff resolution
+tiff(file = "Forest plot selective Ecoli.tiff", width=18, height=12, units="in", res=500, family = "TT Times New Roman")
+#Plot
+
+grid.arrange(p1, p2, nrow = 1)
+
+dev.off()
+
+
+
+
+
+
+
+```
+
+# Animal sources of bacteria from each country
+
+```{r}
+
+# Salmonella 
+
+animal_source_salm <- datal %>% 
+  group_by(country, year, animal) %>% 
+  summarise(count = n()) %>% 
+  spread(year, count)
+
+data_salm_animal <- write.csv(animal_source_salm, "Animal sources for Salmonella.csv")
+
+
+animal_source_necoli <- datal1 %>% 
+  group_by(country, year, animal) %>% 
+  summarise(count = n()) %>% 
+  spread(year, count)
+data_necoli_animal <- write.csv(animal_source_necoli, "Animal sources for non Ecoli.csv")
+
+
+animal_source_secoli <- datb %>% 
+  group_by(country, year, host) %>% 
+  summarise(count = n()) %>% 
+  spread(year, count)
+
+data_secoli_animal <- write.csv(animal_source_secoli, "Animal sources for selective Ecoli.csv")
+
+
+
+
+```
+
+
+
+## Heatmap of resistance genes
+
+
+```{r}
+
+
+heat_plot <- whole_data %>% 
+dplyr::select(country, year, starts_with("propp_")) %>% 
+  gather(key = "genes", value = "percent", "propp_ctxm", "propp_tem", "propp_cmy2", "propp_shv")
+
+
+#data2$`Treatment group`[data2$`Treatment group` == "Control"] <- "Control group"
+
+heat_plot$genes[heat_plot$genes == "propp_ctxm"] <- "blaCTX-M"
+heat_plot$genes[heat_plot$genes == "propp_tem"] <- "blaTEM"
+heat_plot$genes[heat_plot$genes == "propp_cmy2"] <- "blaCMY-2"
+heat_plot$genes[heat_plot$genes == "propp_shv"] <- "blaSHV"
+
+names(heat_plot)[names(heat_plot) == "percent"] <- "%"
+
+heat_plot$`%`[heat_plot$`%` == 0] <- NA
+
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+heatmap <- ggplot(heat_plot, aes(year, country)) +  geom_tile(aes(fill = `%`), colour = "white") +
+    scale_fill_gradient(low = "blue", high = "red") +
+    # scale_y_date(breaks = "1 month") +
+    labs(x="", y="") + 
+  coord_flip() +
+    theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = -0.025)) +
+    facet_grid(~ genes) + theme(text = element_text(family = "A"))
+
+#+ theme(axis.text.y = element_text(size = 12), axis.title=element_text(size=12), strip.text.x = element_text(size = 12))
+
+heatmap
+#ggplotly(heatmap)
+
+#Saving the plots in tiff resolution
+tiff(file = "Heatmap resistance genes.tiff", width=6, height=4, units="in", res=500, family = "TT Times New Roman")
+#Plot
+heatmap
+
+
+dev.off()
+
+
+
+
+```
+
+
+## Heatmap of ESC R Salmonella for each year and food animal sources
+
+
+```{r}
+
+
+heat_salm <- datal %>%
+  mutate(`ESC-R Salmonella (%)` = round((positive/total)*100, 2))
+
+
+  
+
+heat_salm_total <- datal %>% 
+  group_by(country, year) %>% 
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 3),
+         `ESC-R Salmonella (%)` = prop*100, host = "Annual prevalence")
+  
+heat_salm_plot <- bind_rows(heat_salm, heat_salm_total)
+
+windowsFonts(A = windowsFont("Times New Roman"))
+
+library(tidyverse)
+
+heatmap1 <- ggplot(heat_salm_plot, aes(year, country)) +  geom_tile(aes(fill = `ESC-R Salmonella (%)`), colour = "white") +
+    scale_fill_gradient(low = "blue", high = "red") +
+    scale_x_continuous(breaks = heat_salm_plot$year) +
+    labs(x="", y="") + 
+  coord_flip() +
+    theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = -0.025)) + 
+    facet_grid(~ host) + theme(text = element_text(family = "A")) #+ scale_fill_discrete(name = "ESC-R Salmonella (%)")
+
+#+ theme(axis.text.y = element_text(size = 12), axis.title=element_text(size=12), strip.text.x = element_text(size = 12))
+
+heatmap1
+#ggplotly(heatmap)
+
+#Saving the plots in tiff resolution
+tiff(file = "Heatmap ESC-R Salmonella.tiff", width=10, height=4, units="in", res=500, family = "TT Times New Roman")
+#Plot
+heatmap1
+
+
+dev.off()
+
+
+
+
+
+
+```
+
+## Heatmap of non-selective ESC R E. coli
+
+```{r}
+
+
+heat_ecoli <- data1 %>%
+  mutate(`ESC-R Ecoli (%)` = round((positive/total)*100, 2))
+
+
+  
+
+heat_ecoli_total <- data1 %>% 
+  group_by(Country, year) %>% 
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 3),
+         `ESC-R Ecoli (%)` = prop*100, host = "Annual prevalence")
+  
+heat_ecoli_plot <- bind_rows(heat_ecoli, heat_ecoli_total)
+
+
+
+heatmap11 <- ggplot(heat_ecoli_plot, aes(year, Country)) +  geom_tile(aes(fill = `ESC-R Ecoli (%)`), colour = "white") +
+    scale_fill_gradient(low = "blue", high = "red") +
+     scale_x_continuous(breaks = heat_ecoli_plot$year) +
+    labs(x="", y="") + 
+  coord_flip() +
+    theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = -0.025)) + 
+    facet_grid(~ host) + theme(text = element_text(family = "A"))
+
+heatmap11
+
+#Saving the plots in tiff resolution
+tiff(file = "Heatmap ESC-R Ecoli.tiff", width=12, height=4, units="in", res=500, family = "TT Times New Roman")
+#Plot
+heatmap11
+
+
+dev.off()
+
+
+```
+
+## Heatmap of selective ESC R E. coli
+
+```{r}
+
+
+heat_ecoli_sel <- datb %>%
+  mutate(`ESC-R Ecoli (%)` = round((positive/total)*100, 2))
+
+
+  
+
+heat_sel_total <- datb %>% 
+  group_by(country, year) %>% 
+  summarise(posv = sum(positive),
+            N= sum(total)) %>%
+  mutate(prop = round((posv/N), 3),
+         `ESC-R Ecoli (%)` = prop*100, hostx = "Annual prevalence")
+  
+heat_sel_plot <- bind_rows(heat_ecoli_sel, heat_sel_total)
+
+
+
+heatmap12 <- ggplot(heat_sel_plot, aes(year, country)) +  geom_tile(aes(fill = `ESC-R Ecoli (%)`), colour = "white") +
+    scale_fill_gradient(low = "blue", high = "red") +
+   #  scale_x_continuous(breaks = heat_sel_plot$year) +
+    labs(x="", y="") + 
+  coord_flip() +
+    theme(axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = -0.025)) + 
+    facet_grid(~ hostx) + theme(text = element_text(family = "A"))
+
+heatmap12
+
+#Saving the plots in tiff resolution
+tiff(file = "Heatmap selective ESC-R Ecoli.tiff", width=11, height=4, units="in", res=500, family = "TT Times New Roman")
+#Plot
+heatmap12
+
+
+dev.off()
+
+
+
+```
+
+
+
